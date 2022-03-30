@@ -1,0 +1,477 @@
+---
+title: 'HR Data Analytics: Predicting Employee Churn'
+author: "Kevin Ayala"
+date: "3/26/2022"
+output: pdf_document
+---
+
+Segment 1
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Load in required packages
+#install.packages("dplyr")
+#install.packages("readr")
+#install.packages("ggplot2")
+#install.packages("rlang")
+#install.packages("glmnet")
+#install.packages("Information")
+
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(glmnet)
+# Importing the org data
+org <- read_csv("/Users/kevinlorenzoayala/Downloads/employee_data/org.csv")
+# Check the structure of org dataset
+glimpse(org)
+# Counting Active and Inactive employees
+org %>% 
+  count(status)
+# Calculating turnover rate
+org %>% 
+  summarise(avg_turnover_rate = mean(turnover))
+```
+After loading the data, the proportion of employees who have left is 1881 active employees with 410 employees who have left the organization. Either voluntary or involuntary is unknown at this point. General turnover is 17.9%, meaning that employees across the organization have a 17.9% chance of leaving the company/organisation. 
+
+Level that have high Turnover
+```{r}
+# Level wise turnover rate per group
+df_level <- org %>% 
+  group_by(level) %>% 
+  summarise(turnover_level = mean(turnover))
+
+#results
+df_level
+
+# Visualizing the results using ggplot2
+ggplot(df_level, aes(x = level, y = turnover_level, fill = level)) + 
+  ylab("Turnover Rate Per Level") +
+  xlab("Level")+
+  geom_col()
+```
+After doing a quick group by, we can now see the turnover rate based on the employees role within the company varies per role/specialization. Analyst has the highest turnover rate, followed by specialist.  
+
+Turnover rate and Locations
+```{r}
+# Calculating location wise turnover rate
+df_location <- org %>% 
+  group_by(location) %>% 
+  summarize(turnover_location = mean(turnover))
+
+# results
+df_location
+
+# Visualizing the results with ggplot
+ggplot(df_location, aes(x = location, y = turnover_location, fill = location)) +
+  ylab("Turnover Rate per City") +
+  xlab("City") +
+  geom_col()
+```
+Chicago has the highest turnover rate, could it be people leave due to the bad winter? Could play a role.
+
+Filtering the dataset
+```{r}
+# Counting the number of employees across levels
+org %>% 
+  count(level)
+# filtering the employees at Analyst and Specialist level
+org2 <- org %>%
+  filter(level %in% c('Analyst','Specialist')) 
+# Validating the results
+org2 %>% 
+  count(level)
+```
+High level counts between orginization and getting counts per employee level. 
+
+
+Combining HR datasets, Part 1 
+```{r}
+#read in data set
+rating <- read_csv("/Users/kevinlorenzoayala/Downloads/employee_data/rating.csv")
+
+# Viewing the structure of rating dataset
+glimpse(rating)
+# merging datasets
+org3 <- left_join(org2, rating, by = "emp_id")
+
+# Calculatingnrating wise turnover rate
+df_rating <- org3 %>% 
+  group_by(rating) %>% 
+  summarise(turnover_rating = mean(turnover))
+
+# result
+df_rating
+
+```
+Once recieving employee ratings, we are able to calculate employee turnover per rating given to them during performance reviews. As expected, the employees with "Unacceptable" performance have the highest turnover rating, and in contrast the employees with an excellent rating have the least turnover. 
+
+
+Combining HR datasets
+```{r}
+
+survey <- read_csv("/Users/kevinlorenzoayala/Downloads/employee_data/survey.csv")
+# Viewing the structure of survey dataset
+glimpse(survey)
+
+# merging datasets with a left join
+org_final <- left_join(org3, survey, by = 'mgr_id')
+org_final
+
+# Comparing manager effectiveness scores
+ggplot(org_final, aes(x = status, y = mgr_effectiveness, fill = status)) +
+  geom_boxplot()
+```
+
+After combining employee survey data our previuos data with the org, we see tht manager effectiveness is higher with the active employees who have stayed, indicating that a managers effectiveness may be tied in with employee retention. Where as with inactive manger effective scores are lower, meaning possible employees left due to lack of faith with their manager. 
+
+Master data overview
+```{r}
+org_final <- read_csv("/Users/kevinlorenzoayala/Downloads/employee_data/org_final.csv")
+# Viewing the structure of the dataset
+glimpse(org_final)
+# Comparing the travel distance of Active and Inactive employees
+ggplot(org_final, aes(x = status, y = distance_from_home, color = status)) +
+  geom_boxplot()
+
+```
+Employees who live closer to where they work are less likely to turn to inactive employees. It would be interesting to see further data with the effect of remote work being implemented. There are a total of 34 variables. 
+
+
+
+Segment 2
+Deriving Age Difference
+
+```{r}
+# Adding in age_diff
+emp_age_diff <- org_final %>%
+  mutate(age_diff = mgr_age - emp_age)
+
+# Ploting the distribution of age difference
+ggplot(emp_age_diff, aes(x = status, y = age_diff)) + 
+  geom_boxplot()
+```
+Employees who are closer to thier age with thier managers are likely to have more in common and thus have a happier time at work as opposed to workers who do not have anything in common with thier managers. 
+
+Deriving Job Hop Index
+```{r}
+# Adding job_hop_index
+emp_jhi <- emp_age_diff %>% 
+  mutate(job_hop_index = total_experience / no_previous_companies_worked)
+
+# Comparing job hopping index of Active and Inactive employees             
+ggplot(emp_jhi, aes(x = status, y = job_hop_index)) + 
+  geom_boxplot()
+```
+Median job hop index for active and inactive employee are similar. 
+
+Deriving Employee Tenure
+```{r}
+library(lubridate)
+#Converting data type from character to date with dmy format
+emp_jhi <- org_final %>% 
+  mutate(date_of_joining= dmy(date_of_joining),
+         cutoff_date = dmy(cutoff_date),
+         last_working_date = dmy(last_working_date))
+
+# Adding in tenure
+emp_tenure <- emp_jhi %>%
+  mutate(tenure = ifelse(status == "Active", 
+                         time_length(interval(date_of_joining, cutoff_date), 
+                                     "years"), 
+                         time_length(interval(date_of_joining, last_working_date), 
+                                     "years")))
+
+# Comparing tenure of active and inactive employees
+ggplot(emp_tenure, aes(x = status, y = tenure)) + 
+  geom_boxplot()
+
+
+
+```
+The median tenure of inactive employees is less than the tenure of active employees.
+
+Exploring Compensation
+```{r}
+# Ploting the distribution of compensation
+ggplot(emp_tenure, aes(x = compensation)) + 
+  geom_histogram()
+
+# Ploting the distribution of compensation across levels
+ggplot(emp_tenure, 
+       aes(x = level, y = compensation)) +
+  geom_boxplot()
+
+# Comparing compensation of Active and Inactive employees across levels
+ggplot(emp_tenure, 
+       aes(x = level, y = compensation, fill = status)) + 
+  geom_boxplot()
+
+```
+Variation exists within compensation for specialists and analysts. 
+
+
+Deriving Compa-ratio
+```{r}
+# Adding median_compensation and compa_ratio
+emp_compa_ratio <- emp_tenure %>%  
+  group_by(level) %>%   
+  mutate(median_compensation = median(compensation), 
+         compa_ratio = compensation / median_compensation)
+
+# Looking at the median compensation for each level           
+emp_compa_ratio %>% 
+  distinct(level, median_compensation)
+# Adding compa_level
+emp_final <- emp_compa_ratio  %>%  
+  mutate(compa_level = ifelse(compa_ratio > 1, "Above", "Below"))
+# Comparing compa_level for Active and Inactive employees
+ggplot(emp_final, aes(x = status, fill = compa_level)) + 
+  geom_bar(position = "fill")
+```
+Compa-ratio is a unique measure to calculate employee's pay competitiveness.
+A greater proportion of inactive employees were paid less than median compensation
+
+
+Calculating Information Value
+```{r}
+#Information package
+library(Information)
+
+# Computing Information Value 
+IV <- create_infotables(data = emp_final, y = "turnover")
+
+# Printing Information Value 
+IV$Summary
+
+```
+
+
+```{r}
+# Loading caret
+library('caret')
+
+# Set seed of 567
+set.seed(567)
+
+# Storing row numbers for training dataset: index_train
+index_train <- createDataPartition(emp_final$turnover, p = 0.7, list = FALSE)
+
+# Creating training dataset: train_set
+train_set <- emp_final[index_train, ]
+
+# Creating testing dataset: test_set
+test_set <- emp_final[-index_train, ]
+```
+Splitting data into test and training set. 
+
+```{r}
+# Calculating turnover proportion in train_set
+train_set %>% 
+  count(status) %>% 
+  mutate(prop = n / sum(n))
+
+# Calculating turnover proportion in test_set
+test_set %>% 
+  count(status) %>% 
+  mutate(prop = n / sum(n))
+```
+Viewing turnover propertion in both train set and test set. 
+Logistic regression model
+```{r}
+
+#Dropping variables that are irrelevant or offer no predictive power. 
+train_set_multi <- train_set %>%
+  select(-c(emp_id, mgr_id,
+            date_of_joining, last_working_date, cutoff_date,
+            mgr_age, emp_age,
+            median_compensation,
+            department, status))
+  
+#simple logistic regression model
+simple_log <- glm(turnover ~ percent_hike, 
+                  family = "binomial", data = train_set_multi)
+
+# Print summary
+summary(simple_log)
+
+```
+
+Multiple logistic regression model
+```{r}
+# Building a multiple logistic regression model
+multi_log <- glm(turnover ~., family = "binomial", 
+                 data = train_set_multi)
+
+#  summary
+summary(multi_log)
+```
+Several variables are insignificant based on thier z value when compared to a P score. In multiple regression models, this can happen due to multicollinearity. 
+
+mgr_effectivenss and mgr_reportees are statistically significant while total experience and no of previous companies worked are not significant. 
+No leaves taken and distance from home are statistically significant based on the data. 
+
+Detecting multicollinearity
+```{r}
+#car package
+library(car)
+
+# Mult Logistic Model
+multi_log <- glm(turnover ~ ., family = "binomial", data = train_set_multi)
+# Checking for multicollinearity
+vif(multi_log)
+```
+
+Based on the data, the variable Level will need to be removed due to high multicolinearity within the model. Adds noise our prediction. 
+
+Dealing with multicollinearity
+```{r}
+# Removing level
+model_1 <- glm(turnover ~ . - level, family = "binomial", 
+               data = train_set_multi)
+
+# Checking for multi collinearity again
+vif(model_1)
+
+# Removing level & compensation in possible final model
+model_2 <- glm(turnover ~ . - level - compensation, family = "binomial", 
+               data = train_set_multi)
+
+# Checking multi colinearity again
+vif(model_2)
+```
+We again repeat the process to find if other varaibles are causing multicolinearity, we see compensation to be causing issues and thus remove the variable. 
+
+A second pass through confirms that all variables are appropriate due to thier coefficient score being between 1 and 5. 
+
+Building final logistic regression model
+
+```{r}
+
+#Final Data Set with Level and Compensation removed
+train_set_final <- train_set_multi %>% select(c(-level,-compensation))
+
+# Building final logistic regression model
+final_log <- glm(turnover ~ ., family = "binomial", 
+                 data = train_set_final)
+
+# summary
+summary(final_log)
+#Understanding the model predictions
+# Make predictions for training dataset
+prediction_train <- predict(final_log, newdata = train_set, 
+                            type = "response")
+#prediction range
+hist(prediction_train)
+```
+Using final model to make predictions
+```{r}
+#predictions for testing dataset
+prediction_test <- predict(final_log, newdata = test_set, 
+                        type = "response")
+
+# Looking at the prediction range
+hist(prediction_test)
+# Printing the probability of turnover
+prediction_test[c(150, 200)]
+```
+probability range for training and test datasets are similar as confirmed visually by their histograms. 
+
+
+Creating a confusion matrix
+```{r}
+# Classifies predictions using a  standard cut-off of 0.5
+prediction_categories <- ifelse(prediction_test > 0.5, 1, 0)
+
+# Constructing a confusion matrix
+conf_matrix <- table(prediction_categories, test_set$turnover)
+conf_matrix
+```
+Constructing a confusion matrix for accuracy testing of the model. 
+
+
+Accuracy of model
+```{r}
+# Load caret
+library(caret)
+
+# Calls confusionMatrix
+confusionMatrix(conf_matrix)
+```
+
+After turning in the mdel into the accuracy, we see a satisfactory score well in the .9 or 90% accuracy which is good. 
+
+
+Segment 4
+Calculating turnover risk probability
+```{r}
+
+# Loading tidypredict 
+library(tidypredict)
+
+# Probability's of turnover
+emp_risk <- emp_final %>%  
+  filter(status == "Active") %>%
+  tidypredict_to_column(final_log)
+
+# Running the code
+emp_risk %>% 
+  select(emp_id, fit) %>% 
+  top_n(2)
+```
+Calculating employee turnover probability. 
+
+Creating turnover risk buckets
+```{r}
+# Creating turnover risk buckets
+emp_risk_bucket <- emp_risk %>% 
+  mutate(risk_bucket = cut(fit, breaks = c(0, 0.5, 0.6, 0.8, 1), 
+                           labels = c("no-risk", "low-risk", 
+                                      "medium-risk", "high-risk")))
+
+# Counting employees in each risk bucket
+emp_risk_bucket %>%  
+  count(risk_bucket)
+```        
+no-risk, if 0 <= fit <= 0.5
+low-risk, if 0.5 < fit <= 0.6
+medium-risk, if 0.6 < fit <= 0.8
+high-risk, if 0.8 < fit <= 1
+
+
+Percent hike effects
+```{r}
+#histogram of percent hike
+ggplot(emp_final, aes(x = percent_hike)) + 
+  geom_histogram(binwidth = 3)
+
+#salary hike_range of Analyst level employees
+emp_hike_range <- emp_final %>% 
+  filter(level == "Analyst") %>% 
+  mutate(hike_range = cut(percent_hike, breaks = c(0, 10, 15, 20),
+                          include.lowest = TRUE, 
+                          labels = c("0 to 10", 
+                                     "11 to 15", "16 to 20")))
+```
+0 to 10, if 0 <= percent_hike <= 10
+11 to 15, if 11 <= percent_hike <= 15
+16 to 20, if 16 <= percent_hike <= 20
+Calculate turnover rate across salary hike range
+
+
+```{r}
+# turnover rates for each salary hike range 
+df_hike <- emp_hike_range %>% 
+  group_by(hike_range) %>% 
+  summarize(turnover_rate_hike = mean(turnover))
+
+# Checking the results
+df_hike
+
+# Visualizing the results with ggplot2
+ggplot(df_hike, aes(x = hike_range, y = turnover_rate_hike)) +  
+  geom_col()
+```
+
+This graph helps us understand if there is a difference in the percentage of employees leaving the organization in different categories of salary hike
